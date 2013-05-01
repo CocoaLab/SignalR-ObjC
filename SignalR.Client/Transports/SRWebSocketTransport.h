@@ -21,14 +21,11 @@
 //
 
 #import <Foundation/Foundation.h>
-#import "SRClientTransportInterface.h"
-#import "SRHttpClient.h"
-#import "SRRequest.h"
+#import "SRConnectionInterface.h"
+#import "SRHttpBasedTransport.h"
 
-@interface SRWebSocketTransport : NSObject <SRClientTransportInterface>
+@interface SRWebSocketTransport : SRHttpBasedTransport <SRClientTransportInterface>
 
 @property (strong, nonatomic, readwrite) NSNumber *reconnectDelay;
-
-- (instancetype)initWithHttpClient:(id<SRHttpClient>)httpClient;
 
 @end

@@ -22,7 +22,6 @@
 
 #import <Foundation/Foundation.h>
 #import "SRConnectionState.h"
-#import "SRRequest.h"
 
 @protocol SRConnectionInterface <NSObject>
 
@@ -69,6 +68,6 @@
 /// @name Preparing Requests
 ///-------------------------------
 
-- (void)prepareRequest:(id <SRRequest>)request;
+- (void)prepareRequest:(NSMutableURLRequest *)request;
 
 @end

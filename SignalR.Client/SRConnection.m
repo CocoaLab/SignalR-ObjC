@@ -23,12 +23,14 @@
 #include <TargetConditionals.h>
 #import "SRAutoTransport.h"
 #import "SRConnection.h"
-#import "SRDefaultHttpClient.h"
 #import "SRLog.h"
 #import "SRNegotiationResponse.h"
 #import "SRVersion.h"
 
 #import "NSObject+SRJSON.h"
+#import "SRLongPollingTransport.h"
+#import "SRServerSentEventsTransport.h"
+#import "SRWebSocketTransport.h"
 
 void (^prepareRequest)(id);
 
@@ -113,15 +115,11 @@ void (^prepareRequest)(id);
 #pragma mark Connection management
 
 - (void)start {
-    [self startHttpClient:[SRDefaultHttpClient new]];
-}
-
-- (void)startHttpClient:(id <SRHttpClient>)httpClient {
     // Pick the best transport supported by the client
-    [self startTransport:[[SRAutoTransport alloc] initWithHttpClient:httpClient]];
+    [self start:[[SRAutoTransport alloc] init]];
 }
 
-- (void)startTransport:(id <SRClientTransportInterface>)transport {
+- (void)start:(id <SRClientTransportInterface>)transport {
     if (![self changeState:disconnected toState:connecting]) {
         return;
     }
@@ -134,28 +132,36 @@ void (^prepareRequest)(id);
 - (void)negotiate:(id<SRClientTransportInterface>)transport {
     SRLogConnection(@"will negotiate");
     
+    __weak __typeof(&*self)weakSelf = self;
     [transport negotiate:self completionHandler:^(SRNegotiationResponse *negotiationResponse) {
+        __strong __typeof(&*weakSelf)strongSelf = weakSelf;
         SRLogConnection(@"negotiation was successful %@",negotiationResponse);
 
-        [self verifyProtocolVersion:negotiationResponse.protocolVersion];
+        [strongSelf verifyProtocolVersion:negotiationResponse.protocolVersion];
         
         if(negotiationResponse.connectionId) {
             _connectionId = negotiationResponse.connectionId;
             _disconnectTimeout = negotiationResponse.disconnectTimeout;
             _connectionToken = negotiationResponse.connectionToken;
             
-            NSString *data = [self onSending];
-            
-            [_transport start:self withData:data completionHandler:^(id task) {
-                [self changeState:connecting toState:connected];
-                
-                if(self.started != nil) {
-                    self.started();
-                }
-                if(self.delegate && [self.delegate respondsToSelector:@selector(SRConnectionDidOpen:)]) {
-                    [self.delegate SRConnectionDidOpen:self];
-                }
-            }];
+            NSString *data = [strongSelf onSending];
+            [strongSelf startTransport:data];
+        }
+    }];
+}
+
+- (void)startTransport:(NSString *)data {
+    __weak __typeof(&*self)weakSelf = self;
+    [self.transport start:self data:data completionHandler:^(id task) {
+        __strong __typeof(&*weakSelf)strongSelf = weakSelf;
+        
+        [strongSelf changeState:connecting toState:connected];
+        
+        if(strongSelf.started != nil) {
+            strongSelf.started();
+        }
+        if(strongSelf.delegate && [strongSelf.delegate respondsToSelector:@selector(SRConnectionDidOpen:)]) {
+            [strongSelf.delegate SRConnectionDidOpen:strongSelf];
         }
     }];
 }
@@ -253,7 +259,7 @@ void (^prepareRequest)(id);
     } else {
         message = [object SRJSONRepresentation];
     }
-    [_transport send:self withData:message completionHandler:block];
+    [self.transport send:self data:message completionHandler:block];
 }
 
 #pragma mark - 
@@ -285,8 +291,10 @@ void (^prepareRequest)(id);
     // the server during negotiation.
     // If the client tries to reconnect for longer the server will likely have deleted its ConnectionId
     // topic along with the contained disconnect message.
+    __weak __typeof(&*self)weakSelf = self;
     self.disconnectTimeoutOperation = [NSBlockOperation blockOperationWithBlock:^{
-        [self disconnect];
+        __strong __typeof(&*weakSelf)strongSelf = weakSelf;
+        [strongSelf disconnect];
     }];
     [self.disconnectTimeoutOperation performSelector:@selector(start) withObject:nil afterDelay:[_disconnectTimeout integerValue]];
     
@@ -321,16 +329,17 @@ void (^prepareRequest)(id);
 #pragma mark - 
 #pragma mark Prepare Request
 
-- (void)prepareRequest:(id <SRRequest>)request {
+- (void)prepareRequest:(NSMutableURLRequest *)request {
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-    [request setUserAgent:[self createUserAgentString:NSLocalizedString(@"SignalR.Client.iOS",@"")]];
+    [request addValue:[self createUserAgentString:NSLocalizedString(@"SignalR.Client.iOS",@"")] forHTTPHeaderField:@"User-Agent"];
 #elif TARGET_OS_MAC
-    [request setUserAgent:[self createUserAgentString:NSLocalizedString(@"SignalR.Client.OSX",@"")]];
+    [request addValue:[self createUserAgentString:NSLocalizedString(@"SignalR.Client.OSX",@"")] forHTTPHeaderField:@"User-Agent"];
 #endif
     
-    [request setCredentials:_credentials];
+    //TODO: set credentials
+    //[request setCredentials:_credentials];
     
-    [request setHeaders:_headers];
+    [request setAllHTTPHeaderFields:_headers];
     
     //TODO: Potentially set proxy here
 }

@@ -20,21 +20,18 @@
 //  DEALINGS IN THE SOFTWARE.
 //
 
+#import "AFJSONRequestOperation.h"
 #import "SRWebSocketTransport.h"
-#import "SRDefaultHttpClient.h"
 #import "SRWebSocket.h"
 #import "SRLog.h"
 #import "SRWebSocketConnectionInfo.h"
-#import "SRTransportHelper.h"
 #import "SRConnectionInterface.h"
-#import "SRWebSocketWrapperRequest.h"
 #import "SRConnectionExtensions.h"
 
 typedef void (^SRWebSocketStartBlock)(id response);
 
 @interface SRWebSocketTransport () <SRWebSocketDelegate>
 
-@property (strong, nonatomic, readonly) id <SRHttpClient> client;
 @property (strong, nonatomic, readonly) SRWebSocket *webSocket;
 @property (strong, nonatomic, readonly) SRWebSocketConnectionInfo *connectionInfo;
 @property (copy) SRWebSocketStartBlock startBlock;
@@ -43,32 +40,25 @@ typedef void (^SRWebSocketStartBlock)(id response);
 
 @implementation SRWebSocketTransport
 
-static NSString * const kTransportName = @"webSockets";
-
 - (instancetype)init {
-    if(self = [self initWithHttpClient:[[SRDefaultHttpClient alloc] init]]) {
-    }
-    return self;
-}
-
-- (instancetype)initWithHttpClient:(id<SRHttpClient>)httpClient {
     if (self = [super init]) {
-        _client = httpClient;
         _reconnectDelay = @2;
     }
     return self;
 }
 
+#pragma mark
+#pragma mark SRClientTransportInterface
 
 - (NSString *)name {
-    return kTransportName;
+    return @"webSockets";
 }
 
 - (void)negotiate:(id <SRConnectionInterface>)connection completionHandler:(void (^)(SRNegotiationResponse *response))block {
-    [SRTransportHelper getNegotiationResponse:_client connection:connection completionHandler:block];
+    [super negotiate:connection completionHandler:block];
 }
 
-- (void)start:(id <SRConnectionInterface>)connection withData:(NSString *)data completionHandler:(void (^)(id response))block {
+- (void)start:(id <SRConnectionInterface>)connection data:(NSString *)data completionHandler:(void (^)(id response))block {
     _connectionInfo = [[SRWebSocketConnectionInfo alloc] initConnection:connection data:data];
     [self performConnect:block];
 }
@@ -79,7 +69,7 @@ static NSString * const kTransportName = @"webSockets";
 
 - (void)performConnect:(void (^)(id response))block reconnecting:(BOOL)reconnecting {
     NSString *urlString = (reconnecting) ? _connectionInfo.connection.url : [_connectionInfo.connection.url stringByAppendingString:@"connect"];
-    urlString = [urlString stringByAppendingString:[SRTransportHelper receiveQueryString:_connectionInfo.connection data:_connectionInfo.data transport:[self name]]];
+    urlString = [urlString stringByAppendingString:[self receiveQueryString:_connectionInfo.connection data:_connectionInfo.data]];
     
     NSURL *url = [NSURL URLWithString:urlString];
     
@@ -88,12 +78,12 @@ static NSString * const kTransportName = @"webSockets";
     [self setStartBlock:block];
     
     _webSocket = [[SRWebSocket alloc] initWithURL:url];
-    [_connectionInfo.connection prepareRequest:[[SRWebSocketWrapperRequest alloc] initWithWebSocket:_webSocket]];
+    //TODO: Prepare Request
     [_webSocket setDelegate:self];
     [_webSocket open];
 }
 
-- (void)send:(id <SRConnectionInterface>)connection withData:(NSString *)data completionHandler:(void (^)(id response))block {
+- (void)send:(id <SRConnectionInterface>)connection data:(NSString *)data completionHandler:(void (^)(id response))block {
     [_webSocket send:data];
     
     if(block) {
@@ -125,7 +115,7 @@ static NSString * const kTransportName = @"webSockets";
     BOOL timedOut = NO;
     BOOL disconnected = NO;
     
-    [SRTransportHelper processResponse:_connectionInfo.connection response:message timedOut:&timedOut disconnected:&disconnected];
+    [self processResponse:_connectionInfo.connection response:message timedOut:&timedOut disconnected:&disconnected];
     
     if (disconnected)
     {
